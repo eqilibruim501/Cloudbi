@@ -8,7 +8,6 @@
             [metabase
              [events :as events]
              [public-settings :as public-settings]
-             [query-processor :as qp]
              [related :as related]
              [util :as u]]
             [metabase.api
@@ -32,6 +31,7 @@
              [util :as qputil]]
             [metabase.query-processor.middleware
              [cache :as cache]
+             [constraints :as constraints]
              [results-metadata :as results-metadata]]
             [metabase.sync.analyze.query-results :as qr]
             [metabase.util
@@ -126,7 +126,6 @@
 (def ^:private filter-option->fn
   "Functions that should be used to return cards for a given filter option. These functions are all be called with
   `model-id` as the sole paramenter; functions that don't use the param discard it via `u/drop-first-arg`.
-
      ((filter->option->fn :recent) model-id) -> (cards:recent)"
   {:all      (u/drop-first-arg cards:all)
    :mine     (u/drop-first-arg cards:mine)
@@ -197,7 +196,7 @@
      (cond
        valid-metadata? (trs "Card results metadata passed in to API is VALID. Thanks!")
        metadata        (trs "Card results metadata passed in to API is INVALID. Running query to fetch correct metadata.")
-       :else           (trs "Card results metadata passed in to API is  ISSING. Running query to fetch correct metadata.")))
+       :else           (trs "Card results metadata passed in to API is MISSING. Running query to fetch correct metadata.")))
     (if valid-metadata?
       (a/to-chan [metadata])
       (qp.async/result-metadata-for-query-async query))))
@@ -300,7 +299,6 @@
   passed in to the API; if so, verifiy that it was correct (the checksum is valid); if not, go fetch it. If the query
   has not changed, this returns a closed channel (so you will get `nil` when you attempt to fetch the result, and
   will know not to update the value in the DB.)
-
   Either way, results are returned asynchronously on a channel."
   [card query metadata checksum]
   (if (and query
@@ -595,11 +593,13 @@
                   (u/emoji "💾"))
         ttl-seconds))))
 
-(defn- query-for-card [card parameters constraints middleware]
-  (let [query (assoc (:dataset_query card)
-                :constraints constraints
-                :parameters  parameters
-                :middleware  middleware)
+(defn- query-for-card [{query :dataset_query, :as card} parameters constraints middleware]
+  (let [query (-> query
+                  ;; don't want default constraints overridding anything that's already there
+                  (m/dissoc-in [:middleware :add-default-userland-constraints?])
+                  (assoc :constraints constraints
+                         :parameters  parameters
+                         :middleware  middleware))
         ttl   (when (public-settings/enable-query-caching)
                 (or (:cache_ttl card)
                     (query-magic-ttl query)))]
@@ -610,7 +610,7 @@
   Exception if preconditions (such as read perms) are not met before returning a channel."
   {:style/indent 1}
   [card-id & {:keys [parameters constraints context dashboard-id middleware]
-              :or   {constraints qp/default-query-constraints
+              :or   {constraints constraints/default-query-constraints
                      context     :question}}]
   {:pre [(u/maybe? sequential? parameters)]}
   (let [card    (api/read-check (Card card-id))

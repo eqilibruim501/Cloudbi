@@ -54,6 +54,7 @@ export const BackendResource = createSharedResource("BackendResource", {
           "-Xverify:none", // Skip bytecode verification for the JAR so it launches faster
           "-Djava.awt.headless=true", // when running on macOS prevent little Java icon from popping up in Dock
           "-Duser.timezone=US/Pacific",
+          `-Dlog4j.configuration=file:${__dirname}/log4j.properties`,
           "-jar",
           "target/uberjar/metabase.jar",
         ],
@@ -67,7 +68,7 @@ export const BackendResource = createSharedResource("BackendResource", {
         },
       );
     }
-    if (!await isReady(server.host)) {
+    if (!(await isReady(server.host))) {
       process.stdout.write(
         "Waiting for backend (host=" +
           server.host +
@@ -75,7 +76,7 @@ export const BackendResource = createSharedResource("BackendResource", {
           server.dbKey +
           ")",
       );
-      while (!await isReady(server.host)) {
+      while (!(await isReady(server.host))) {
         if (!process.env["CI"]) {
           // disable for CI since it break's CircleCI's no_output_timeout
           process.stdout.write(".");
